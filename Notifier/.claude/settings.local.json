@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(ls:*)",
+      "Bash(python3 -c \"import requests; print\\('requests available'\\)\")",
+      "Bash(python3 -c \"import urllib.request; print\\('urllib available'\\)\")",
+      "Bash(python3 -c \"import json, sys, os, platform, subprocess, tempfile, pathlib, datetime; print\\('stdlib ok'\\)\")",
+      "Bash(osascript --version)",
+      "Bash(python3:*)"
+    ]
+  }
+}
