@@ -22,6 +22,15 @@ DEFAULT_CONFIG = {
         "enabled": False,
         "webhook_url": ""
     },
+    "email": {
+        "enabled": False,
+        "smtp_host": "smtp.gmail.com",
+        "smtp_port": 587,
+        "smtp_user": "",
+        "smtp_password": "",
+        "from_address": "",
+        "to_address": ""
+    },
     "messages": {
         "Stop": "Claude is done thinking in session: {session_name}",
         "Notification": "Claude needs your attention in session: {session_name} — {message}"

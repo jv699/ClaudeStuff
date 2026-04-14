@@ -111,6 +111,60 @@ rm /tmp/claude_notifier_state.json        # macOS / Linux
 del %TEMP%\claude_notifier_state.json     # Windows
 ```
 
+## Email setup (Gmail)
+
+Email is an alternative channel that posts to a RingCentral conversation via its "post by email" address. Both channels can be enabled at the same time.
+
+### Step A — Get your Gmail App Password
+
+Google requires an App Password for SMTP access — your regular Gmail password will not work.
+
+1. Go to your Google Account > **Security**
+2. Under "How you sign in to Google", ensure **2-Step Verification** is enabled (required for App Passwords)
+3. Search for **App Passwords** in the security settings
+4. Select app: **Mail**, select device: **Other** (type a name like "Claude Notifier")
+5. Click **Generate** — copy the 16-character password shown (no spaces)
+
+> App Passwords are only available if 2-Step Verification is enabled on your account.
+
+### Step B — Get the RingCentral conversation email address
+
+1. Open the conversation in RingCentral you want notifications delivered to
+2. Click the conversation name or settings icon at the top
+3. Look for **Post by email** or **Email integration** — copy the address shown (it will look something like `team.xxxxxxxx@posts.ringcentral.com`)
+
+### Step C — Configure the email section
+
+Edit `~/.claude/notifier.json` and fill in the `email` block:
+
+```json
+"email": {
+  "enabled": true,
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "you@gmail.com",
+  "smtp_password": "xxxx xxxx xxxx xxxx",
+  "from_address": "you@gmail.com",
+  "to_address": "team.xxxxxxxx@posts.ringcentral.com"
+}
+```
+
+| Field | Description |
+|---|---|
+| `smtp_user` | Your full Gmail address |
+| `smtp_password` | The 16-character App Password from step A (spaces are fine to include or omit) |
+| `from_address` | Same as `smtp_user` |
+| `to_address` | The RingCentral conversation email address from step B |
+
+### Test it
+
+```bash
+echo '{"session_id":"test-1234","transcript_path":"","hook_event_name":"Stop","stop_hook_active":true}' \
+  | python3 notifier.py 2>&1
+```
+
+You should see `[claude-notifier] Email notification sent` and a message appear in the RingCentral conversation shortly after.
+
 ## Troubleshooting
 
 **No message received after a Claude session ends**
@@ -131,6 +185,18 @@ The webhook was deleted or regenerated in RingCentral. Create a new one and upda
 **Notifications feel spammy**
 
 Increase `cooldown_seconds` in `~/.claude/notifier.json`. The cooldown is tracked per event type (`Stop` and `Notification` independently).
+
+**`Email notification failed: (535, b'5.7.8 Username and Password not accepted')`**
+
+The App Password is wrong or your regular Gmail password was used. Generate a new App Password and update `smtp_password` in `~/.claude/notifier.json`.
+
+**`Email notification failed: ... SMTPAuthenticationError`**
+
+2-Step Verification may not be enabled on the Google account, which is required for App Passwords. Enable it at Google Account > Security, then generate an App Password.
+
+**Email sends but nothing appears in RingCentral**
+
+The `to_address` may be wrong. Double-check the "post by email" address in the RingCentral conversation settings. Note that delivery can take up to a minute.
 
 **Moved the notifier files to a new location**
 

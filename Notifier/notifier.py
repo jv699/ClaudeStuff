@@ -2,7 +2,8 @@
 """
 Claude Code Notifier — hook handler for Stop and Notification events.
 Invoked by Claude Code via hooks configured in ~/.claude/settings.json.
-Receives event JSON on stdin and posts to a RingCentral incoming webhook.
+Receives event JSON on stdin and sends notifications via RingCentral webhook
+and/or email.
 """
 
 import sys
@@ -13,6 +14,8 @@ import pathlib
 import datetime
 import tempfile
 import urllib.request
+import smtplib
+from email.message import EmailMessage
 
 try:
     import requests
@@ -44,6 +47,15 @@ def get_default_config() -> dict:
         "ringcentral": {
             "enabled": False,
             "webhook_url": ""
+        },
+        "email": {
+            "enabled": False,
+            "smtp_host": "smtp.gmail.com",
+            "smtp_port": 587,
+            "smtp_user": "",
+            "smtp_password": "",
+            "from_address": "",
+            "to_address": ""
         },
         "messages": {
             "Stop": "Claude is done thinking in session: {session_name}",
@@ -217,6 +229,34 @@ def send_ringcentral_webhook(config: dict, text: str) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Email
+# ---------------------------------------------------------------------------
+
+def send_email_notification(config: dict, text: str) -> None:
+    em_cfg = config.get("email", {})
+    if not em_cfg.get("enabled", False):
+        return
+    required = ["smtp_host", "smtp_user", "smtp_password", "from_address", "to_address"]
+    missing = [k for k in required if not em_cfg.get(k, "").strip()]
+    if missing:
+        log(f"Email not configured — missing fields: {', '.join(missing)}")
+        return
+    try:
+        msg = EmailMessage()
+        msg["Subject"] = "Claude Code Notification"
+        msg["From"]    = em_cfg["from_address"]
+        msg["To"]      = em_cfg["to_address"]
+        msg.set_content(text)
+        with smtplib.SMTP(em_cfg["smtp_host"], em_cfg.get("smtp_port", 587)) as smtp:
+            smtp.starttls()
+            smtp.login(em_cfg["smtp_user"], em_cfg["smtp_password"])
+            smtp.send_message(msg)
+        log("Email notification sent")
+    except Exception as e:
+        log(f"Email notification failed: {e}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -241,6 +281,7 @@ def main() -> None:
         text     = build_message(template, session, raw_msg)
 
         send_ringcentral_webhook(config, f"Claude Code: {text}")
+        send_email_notification(config, f"Claude Code: {text}")
 
         save_state(update_cooldown(state, event))
 
