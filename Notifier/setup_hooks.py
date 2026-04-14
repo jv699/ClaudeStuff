@@ -20,11 +20,7 @@ DEFAULT_CONFIG = {
     "cooldown_seconds": 30,
     "ringcentral": {
         "enabled": False,
-        "client_id": "",
-        "client_secret": "",
-        "jwt_token": "",
-        "from_number": "",
-        "to_number": ""
+        "webhook_url": ""
     },
     "messages": {
         "Stop": "Claude is done thinking in session: {session_name}",

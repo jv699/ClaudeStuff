@@ -1,12 +1,12 @@
 # Claude Code Notifier — Setup Guide
 
-Sends you a RingCentral SMS when Claude finishes a response or needs your attention. Hooks into Claude Code's event system with no background process required.
+Posts a message to RingCentral team messaging when Claude finishes a response or needs your attention. Uses an incoming webhook — no API credentials or OAuth required.
 
 ## Prerequisites
 
 - Python 3.7+
 - Claude Code installed and configured
-- A RingCentral account with API access (see step 3)
+- Access to RingCentral (web, desktop, or mobile)
 
 ## Step 1 — Clone / place the files
 
@@ -35,22 +35,19 @@ The script is idempotent — safe to re-run; it won't add duplicate hooks.
 
 **Restart Claude Code after running setup** for the hooks to take effect.
 
-## Step 3 — Get RingCentral API credentials
+## Step 3 — Create a RingCentral incoming webhook
 
-You need a RingCentral app with SMS permissions and a JWT credential. If your company already has a RingCentral developer account, ask your admin for access to the Developer Portal. Otherwise:
+Each person sets up their own webhook pointing to a conversation of their choice (personal chat, a shared team channel, etc.).
 
-1. Go to the [RingCentral Developer Portal](https://developers.ringcentral.com) and log in
-2. Create a new app (or use an existing one):
-   - Platform type: **Server/Backend**
-   - Auth type: **JWT auth flow**
-   - Permissions: **SMS**
-3. Note the app's **Client ID** and **Client Secret** from the app's credentials tab
-4. Create a JWT credential:
-   - In the Developer Portal, go to **Credentials** > **Create JWT**
-   - Scope it to your app
-   - Copy the generated JWT string — it won't be shown again
+1. Open RingCentral (web or desktop)
+2. Navigate to the conversation you want notifications delivered to
+3. Click the **Integrations** or **+** icon at the top of the conversation (the exact label varies by client version)
+4. Select **Incoming Webhook**
+5. Give it a name (e.g. "Claude Code")
+6. Copy the generated webhook URL — it looks like:
+   `https://hooks.ringcentral.com/webhook/v2/...`
 
-> **Sandbox vs Production:** New RingCentral apps start in Sandbox. Sandbox credentials work against `platform.devtest.ringcentral.com` instead of `platform.ringcentral.com`. The notifier uses the production URL by default. If testing in Sandbox, temporarily change the URLs in `notifier.py` (`_rc_get_token` and `_rc_send_sms`) to use the sandbox base URL.
+> **Team setup:** For a shared channel, whoever manages the channel creates one webhook and shares the URL with the team. Everyone uses the same `webhook_url` and notifications go to the channel. For personal notifications, each person creates their own webhook in their own DM with themselves or a personal channel.
 
 ## Step 4 — Configure the notifier
 
@@ -62,11 +59,7 @@ Edit `~/.claude/notifier.json`:
   "cooldown_seconds": 30,
   "ringcentral": {
     "enabled": true,
-    "client_id": "YOUR_CLIENT_ID",
-    "client_secret": "YOUR_CLIENT_SECRET",
-    "jwt_token": "YOUR_JWT_TOKEN",
-    "from_number": "+15551234567",
-    "to_number": "+15557654321"
+    "webhook_url": "https://hooks.ringcentral.com/webhook/v2/..."
   },
   "messages": {
     "Stop": "Claude is done thinking in session: {session_name}",
@@ -78,10 +71,9 @@ Edit `~/.claude/notifier.json`:
 | Field | Description |
 |---|---|
 | `enabled` | Master on/off switch. Set to `false` to silence all notifications without removing hooks. |
-| `cooldown_seconds` | Minimum seconds between notifications of the same type. Prevents SMS spam during rapid back-and-forth. Default: `30`. |
-| `ringcentral.enabled` | Must be `true` for SMS to send. Set to `false` to disable SMS while keeping hooks active. |
-| `from_number` | The RingCentral number SMS is sent from (must be on your account). E164 format: `+1XXXXXXXXXX`. |
-| `to_number` | The phone number to receive the SMS. E164 format: `+1XXXXXXXXXX`. |
+| `cooldown_seconds` | Minimum seconds between notifications of the same type. Prevents message spam during rapid back-and-forth. Default: `30`. |
+| `ringcentral.enabled` | Must be `true` for messages to send. |
+| `ringcentral.webhook_url` | The webhook URL copied from step 3. |
 | `messages.Stop` | Template sent when Claude finishes its turn. |
 | `messages.Notification` | Template sent when Claude needs input or permission. |
 
@@ -94,64 +86,52 @@ Two placeholders are available:
 
 ## Step 5 — Test it
 
-**Test without RingCentral (config check only):**
+**Simulate a Stop event:**
 
 ```bash
-echo '{"session_id":"test-1234","transcript_path":"","hook_event_name":"Stop","stop_hook_active":true}' \
-  | python3 notifier.py
-```
-
-You should see no output (all logging goes to stderr). Run it again immediately — the second run should log the cooldown message:
-
-```bash
-# Run twice quickly to verify cooldown
 echo '{"session_id":"test-1234","transcript_path":"","hook_event_name":"Stop","stop_hook_active":true}' \
   | python3 notifier.py 2>&1
 ```
 
-**Test the Notification event:**
+You should see `[claude-notifier] RingCentral webhook message sent` in the output and a message appear in your RingCentral conversation.
+
+**Simulate a Notification event:**
 
 ```bash
 echo '{"session_id":"test-1234","transcript_path":"","hook_event_name":"Notification","message":"Permission needed to run a command"}' \
   | python3 notifier.py 2>&1
 ```
 
-**Test with RingCentral enabled:**
-
-Set `ringcentral.enabled` to `true` in `~/.claude/notifier.json` with your credentials filled in, then run the Stop test above. You should receive an SMS within a few seconds.
+**Test cooldown** — run either command twice quickly. The second run should print `Within cooldown window for Stop, skipping` and not post a message.
 
 **Reset cooldown between tests:**
 
 ```bash
-rm /tmp/claude_notifier_state.json   # macOS / Linux
-del %TEMP%\claude_notifier_state.json  # Windows
+rm /tmp/claude_notifier_state.json        # macOS / Linux
+del %TEMP%\claude_notifier_state.json     # Windows
 ```
 
 ## Troubleshooting
 
-**No SMS received after a Claude session ends**
+**No message received after a Claude session ends**
 
 1. Check that `setup_hooks.py` was run and hooks appear in `~/.claude/settings.json` under `hooks.Stop` and `hooks.Notification`
 2. Confirm `ringcentral.enabled` is `true` in `~/.claude/notifier.json`
-3. Run the manual stdin test above with `2>&1` to see stderr logs — missing fields or auth errors will be printed there
-4. Verify `from_number` is a real SMS-capable number on your RingCentral account
+3. Run the manual test above — errors are printed to stderr and will show with `2>&1`
+4. Verify the webhook URL is correct and hasn't been deleted or regenerated in RingCentral
 
-**`RingCentral not configured — missing fields`**
+**`RingCentral not configured — webhook_url is empty`**
 
-All five fields (`client_id`, `client_secret`, `jwt_token`, `from_number`, `to_number`) must be non-empty strings. Check for accidental whitespace or empty values.
+The `webhook_url` field in `~/.claude/notifier.json` is missing or blank. Paste the URL from step 3.
 
-**`RingCentral SMS failed: HTTP Error 401`**
+**`RingCentral webhook failed: HTTP Error 404`**
 
-The JWT token has expired or the client credentials are wrong. Re-generate the JWT in the Developer Portal and update `~/.claude/notifier.json`.
+The webhook was deleted or regenerated in RingCentral. Create a new one and update `webhook_url` in `~/.claude/notifier.json`.
 
-**`RingCentral SMS failed: HTTP Error 403`**
+**Notifications feel spammy**
 
-The app lacks SMS permission, or the `from_number` is not authorized on the account. Check the app's permission scopes in the Developer Portal.
-
-**Notifications fire but feel spammy**
-
-Increase `cooldown_seconds` in `~/.claude/notifier.json`. The cooldown is tracked per event type (`Stop` and `Notification` independently), so both can fire in the same window if they're different event types.
+Increase `cooldown_seconds` in `~/.claude/notifier.json`. The cooldown is tracked per event type (`Stop` and `Notification` independently).
 
 **Moved the notifier files to a new location**
 
-Re-run `python3 setup_hooks.py` from the new location. The old hook entry will remain in `settings.json` pointing at the old path — remove it manually from `~/.claude/settings.json` under `hooks.Stop` and `hooks.Notification`.
+Re-run `python3 setup_hooks.py` from the new location. Remove the old hook entry manually from `~/.claude/settings.json` under `hooks.Stop` and `hooks.Notification`.

@@ -2,7 +2,7 @@
 """
 Claude Code Notifier — hook handler for Stop and Notification events.
 Invoked by Claude Code via hooks configured in ~/.claude/settings.json.
-Receives event JSON on stdin and sends a RingCentral SMS.
+Receives event JSON on stdin and posts to a RingCentral incoming webhook.
 """
 
 import sys
@@ -12,9 +12,7 @@ import platform
 import pathlib
 import datetime
 import tempfile
-import base64
 import urllib.request
-import urllib.parse
 
 try:
     import requests
@@ -45,11 +43,7 @@ def get_default_config() -> dict:
         "cooldown_seconds": 30,
         "ringcentral": {
             "enabled": False,
-            "client_id": "",
-            "client_secret": "",
-            "jwt_token": "",
-            "from_number": "",
-            "to_number": ""
+            "webhook_url": ""
         },
         "messages": {
             "Stop": "Claude is done thinking in session: {session_name}",
@@ -187,76 +181,39 @@ def build_message(template: str, session_name: str, message: str = "") -> str:
 
 
 # ---------------------------------------------------------------------------
-# RingCentral SMS
+# RingCentral Webhook
 # ---------------------------------------------------------------------------
 
-def _http_post(url: str, headers: dict, body: bytes) -> dict:
-    """POST helper that uses requests if available, else urllib."""
-    if HAS_REQUESTS:
-        resp = requests.post(url, headers=headers, data=body, timeout=10)
-        resp.raise_for_status()
-        return resp.json()
-    else:
-        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode())
-
-
-def _rc_get_token(rc_cfg: dict) -> str:
-    credentials = base64.b64encode(
-        f"{rc_cfg['client_id']}:{rc_cfg['client_secret']}".encode()
-    ).decode()
-    headers = {
-        "Authorization": f"Basic {credentials}",
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-    body = urllib.parse.urlencode({
-        "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
-        "assertion": rc_cfg["jwt_token"],
-    }).encode()
-    result = _http_post(
-        "https://platform.ringcentral.com/restapi/oauth/token",
-        headers,
-        body,
-    )
-    token = result.get("access_token")
-    if not token:
-        raise RuntimeError(f"No access_token in response: {result}")
-    return token
-
-
-def _rc_send_sms(rc_cfg: dict, token: str, text: str) -> None:
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json",
-    }
-    body = json.dumps({
-        "from": {"phoneNumber": rc_cfg["from_number"]},
-        "to":   [{"phoneNumber": rc_cfg["to_number"]}],
-        "text": text,
-    }).encode()
-    _http_post(
-        "https://platform.ringcentral.com/restapi/v1.0/account/~/extension/~/sms",
-        headers,
-        body,
-    )
-    log("RingCentral SMS sent")
-
-
-def send_ringcentral_sms(config: dict, text: str) -> None:
+def send_ringcentral_webhook(config: dict, text: str) -> None:
     rc_cfg = config.get("ringcentral", {})
     if not rc_cfg.get("enabled", False):
         return
-    required = ["client_id", "client_secret", "jwt_token", "from_number", "to_number"]
-    missing = [k for k in required if not rc_cfg.get(k, "").strip()]
-    if missing:
-        log(f"RingCentral not configured — missing fields: {', '.join(missing)}")
+    webhook_url = rc_cfg.get("webhook_url", "").strip()
+    if not webhook_url:
+        log("RingCentral not configured — webhook_url is empty")
         return
     try:
-        token = _rc_get_token(rc_cfg)
-        _rc_send_sms(rc_cfg, token, text)
+        body = json.dumps({"text": text}).encode()
+        if HAS_REQUESTS:
+            resp = requests.post(
+                webhook_url,
+                headers={"Content-Type": "application/json"},
+                data=body,
+                timeout=10,
+            )
+            resp.raise_for_status()
+        else:
+            req = urllib.request.Request(
+                webhook_url,
+                data=body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=10):
+                pass
+        log("RingCentral webhook message sent")
     except Exception as e:
-        log(f"RingCentral SMS failed: {e}")
+        log(f"RingCentral webhook failed: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -265,9 +222,9 @@ def send_ringcentral_sms(config: dict, text: str) -> None:
 
 def main() -> None:
     try:
-        payload    = read_payload()
-        event      = payload.get("hook_event_name", "Unknown")
-        config     = load_config()
+        payload  = read_payload()
+        event    = payload.get("hook_event_name", "Unknown")
+        config   = load_config()
 
         if not config.get("enabled", True):
             sys.exit(0)
@@ -283,7 +240,7 @@ def main() -> None:
         template = config.get("messages", {}).get(event, "Claude event: {session_name}")
         text     = build_message(template, session, raw_msg)
 
-        send_ringcentral_sms(config, f"Claude Code: {text}")
+        send_ringcentral_webhook(config, f"Claude Code: {text}")
 
         save_state(update_cooldown(state, event))
 
